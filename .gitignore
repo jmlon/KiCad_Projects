@@ -16,3 +16,15 @@ _autosave-*
 # Generated outputs (remove these lines if you want to version Gerbers, etc.)
 # gerbers/
 # *.zip
+
+# KiCad 10 Local History (contains embedded .git repo)
+.history/
+
+# KiCad lock, backup, and local UI state files
+*.lck
+*.bak
+*.kicad_prl
+*-backups/
+
+# MCP visual diff cache (if not needed in repo)
+.kicad-mcp/

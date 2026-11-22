@@ -1,0 +1,15 @@
+[project]
+name = "z80-sbc-nopic"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "build123d>=0.13.0",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=2.4.1",
+    "ruff>=0.17.6",
+]
