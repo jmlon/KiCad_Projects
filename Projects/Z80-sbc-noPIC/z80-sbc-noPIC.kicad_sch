@@ -9095,6 +9095,12 @@
 		(uuid "65b6bdee-409c-4dda-9aae-e079bec2e924")
 	)
 	(junction
+		(at 30.48 226.06)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "7a4e9138-0447-4c4a-a531-1655c33b8c52")
+	)
+	(junction
 		(at 134.62 234.95)
 		(diameter 0)
 		(color 0 0 0 0)
@@ -12866,6 +12872,16 @@
 	)
 	(wire
 		(pts
+			(xy 24.13 219.71) (xy 30.48 219.71)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "a30fa1c2-e2df-42c5-b711-fa144e66fd9c")
+	)
+	(wire
+		(pts
 			(xy 85.09 218.44) (xy 158.75 218.44)
 		)
 		(stroke
@@ -13043,6 +13059,16 @@
 			(type default)
 		)
 		(uuid "ad606745-912e-4779-820a-14a08044def0")
+	)
+	(wire
+		(pts
+			(xy 30.48 219.71) (xy 30.48 226.06)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "ad81df41-fb77-4e04-bd52-9b42ce429520")
 	)
 	(wire
 		(pts
@@ -20791,7 +20817,7 @@
 				)
 			)
 		)
-		(property "Footprint" "Package_TO_SOT_THT:TO-92_Inline"
+		(property "Footprint" "Package_TO_SOT_THT:TO-92_Inline_Wide"
 			(at 58.42 198.12 0)
 			(hide yes)
 			(show_name no)
@@ -24172,7 +24198,7 @@
 			)
 		)
 		(property "Value" "+5V"
-			(at 29.21 219.71 90)
+			(at 32.258 217.678 90)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -25772,6 +25798,82 @@
 			(project ""
 				(path "/cb789465-f225-441a-b27f-8713bc99eaaf"
 					(reference "D1")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "power:PWR_FLAG")
+		(at 24.13 219.71 0)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(uuid "f5034048-b322-4667-8396-6bc5dd96a05a")
+		(property "Reference" "#FLG03"
+			(at 24.13 213.36 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "PWR_FLAG"
+			(at 24.13 214.63 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" ""
+			(at 24.13 219.71 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 24.13 219.71 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" ""
+			(at 24.13 219.71 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "1"
+			(uuid "399bf93a-a704-4a17-9113-78e3b3197ace")
+		)
+		(instances
+			(project "z80-sbc-noPIC"
+				(path "/038e9d5f-b272-443d-8510-715d1966b6d0"
+					(reference "#FLG03")
 					(unit 1)
 				)
 			)
