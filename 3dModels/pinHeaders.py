@@ -10,6 +10,7 @@ from build123d import (
     Align,
     Axis,
     Box,
+    BuildLine,
     BuildPart,
     BuildSketch,
     Color,
@@ -20,10 +21,13 @@ from build123d import (
     Mode,
     Part,
     Plane,
+    Polyline,
     Rectangle,
     chamfer,
     export_step,
     extrude,
+    fillet,
+    sweep,
 )
 
 import common
@@ -33,6 +37,64 @@ STEP_MODELS_DIR = Path(__file__).resolve().parent / "stepModels"
 PLASTIC_COLOR = Color(0.12, 0.12, 0.12)
 GOLD_PIN_COLOR = Color(0.85, 0.68, 0.25)
 TIN_PIN_COLOR = Color(0.80, 0.80, 0.83)
+
+HEADER_COLORS: dict[str, Color] = {
+    "black": PLASTIC_COLOR,
+    "white": Color(0.92, 0.92, 0.90),
+    "red": Color(0.75, 0.12, 0.12),
+    "blue": Color(0.12, 0.30, 0.72),
+    "green": Color(0.14, 0.52, 0.22),
+    "yellow": Color(0.88, 0.72, 0.10),
+    "orange": Color(0.88, 0.42, 0.08),
+    "gray": Color(0.45, 0.47, 0.50),
+    "grey": Color(0.45, 0.47, 0.50),
+}
+
+ColorSpec = str | Color | tuple[float, float, float]
+
+
+def _resolve_color(color: ColorSpec) -> tuple[Color, str]:
+    """Resolve a color specification into a `(Color, filename_suffix)` pair.
+
+    Default `"black"` returns an empty suffix so standard black headers keep
+    the canonical KiCad filename. Other colors return a suffix like `"_Red"`
+    or `"_FF4400"`.
+    """
+    if isinstance(color, Color):
+        if tuple(color) == tuple(PLASTIC_COLOR):
+            return color, ""
+        r, g, b = (round(c * 255) for c in tuple(color)[:3])
+        return color, f"_{r:02X}{g:02X}{b:02X}"
+
+    if isinstance(color, tuple):
+        if len(color) != 3:
+            raise ValueError(f"RGB color tuple must have 3 values, got {color}")
+        resolved = Color(*color)
+        r, g, b = (round(c * 255) for c in color)
+        return resolved, f"_{r:02X}{g:02X}{b:02X}"
+
+    key = color.strip().lower()
+    if key in HEADER_COLORS:
+        suffix = "" if key == "black" else f"_{key.capitalize()}"
+        return HEADER_COLORS[key], suffix
+
+    hex_str = key.lstrip("#")
+    if len(hex_str) == 6 and all(c in "0123456789abcdef" for c in hex_str):
+        rf = int(hex_str[0:2], 16) / 255.0
+        gf = int(hex_str[2:4], 16) / 255.0
+        bf = int(hex_str[4:6], 16) / 255.0
+        return Color(rf, gf, bf), f"_{hex_str.upper()}"
+
+    # Fall back to build123d's CSS color name support (e.g. "purple", "cyan")
+    try:
+        resolved = Color(key)
+    except ValueError as exc:
+        valid = ", ".join(k for k in HEADER_COLORS if k != "grey")
+        raise ValueError(
+            f"Unsupported color {color!r}. Use one of ({valid}), "
+            "a CSS color name, a #RRGGBB hex string, an RGB tuple, or a Color."
+        ) from exc
+    return resolved, f"_{key.capitalize()}"
 
 
 def _validate_counts(pins: int, rows: int) -> None:
@@ -88,6 +150,7 @@ def male_pin_header(
     pins: int,
     rows: int = 1,
     export: bool = False,
+    color: ColorSpec = "black",
 ) -> Compound:
     """Create a vertical through-hole male pin header of `rows x pins`.
 
@@ -98,11 +161,15 @@ def male_pin_header(
         pins: Number of pins per row.
         rows: Number of rows (default: 1).
         export: When True, exports the STEP model to `./stepModels/`.
+        color: Plastic insulator color name (e.g. `"black"`, `"red"`, `"blue"`),
+            `#RRGGBB` hex string, RGB float tuple, or `build123d.Color`
+            (default: `"black"`).
 
     Returns:
         A `Compound` containing the insulator and gold-plated pins.
     """
     _validate_counts(pins, rows)
+    plastic_color, color_suffix = _resolve_color(color)
 
     pitch = common.male_pin_pitch
     ins_height = common.male_pin_insulation_height
@@ -142,7 +209,7 @@ def male_pin_header(
 
     assert insulator_builder.part is not None
     insulator = insulator_builder.part
-    insulator.color = PLASTIC_COLOR
+    insulator.color = plastic_color
     insulator.label = "Insulator"
 
     # Metal pins
@@ -155,7 +222,150 @@ def male_pin_header(
     pins_compound = Compound(children=pin_parts, label="Pins")
     pins_compound.color = GOLD_PIN_COLOR
 
-    model_name = f"PinHeader_{rows}x{pins:02d}_P{pitch:.2f}mm_Vertical"
+    model_name = (
+        f"PinHeader_{rows}x{pins:02d}_P{pitch:.2f}mm_Vertical{color_suffix}"
+    )
+    model = Compound(children=[insulator, pins_compound], label=model_name)
+
+    if export:
+        _export_model(model, f"{model_name}.step")
+
+    return model
+
+
+def _build_angled_male_pin(
+    y_tail: float,
+    z_bend: float,
+    y_tip: float,
+) -> Part:
+    """Build a single 90-degree bent square male header pin at `X = 0`.
+
+    The solder tail extends vertically downward from `(0, y_tail, z_bend)` to
+    `(0, y_tail, -male_pin_length_over_insulator)`, bends 90 degrees with a
+    smooth radius into `+Y`, and extends horizontally to `(0, y_tip, z_bend)`.
+    """
+    pin_size = common.male_pin_tickness
+    z_bottom = -common.male_pin_length_over_insulator
+    bend_radius = 0.8
+    tip_chamfer = min(0.15, pin_size * 0.25)
+
+    with BuildPart() as pin_builder:
+        with BuildLine() as path:
+            wire = Polyline(
+                (0, y_tail, z_bottom),
+                (0, y_tail, z_bend),
+                (0, y_tip, z_bend),
+            )
+            fillet(wire.vertices()[1], radius=bend_radius)
+        with BuildSketch(Plane.XY.offset(z_bottom)), Locations((0, y_tail)):
+            Rectangle(pin_size, pin_size)
+        sweep(path=path.line)
+
+        bottom_edges = pin_builder.edges().filter_by_position(
+            Axis.Z, z_bottom, z_bottom, inclusive=(True, True)
+        )
+        front_edges = pin_builder.edges().filter_by_position(
+            Axis.Y, y_tip, y_tip, inclusive=(True, True)
+        )
+        chamfer(bottom_edges + front_edges, length=tip_chamfer)
+
+    assert pin_builder.part is not None
+    return pin_builder.part
+
+
+def angled_male_pin_header(
+    pins: int,
+    rows: int = 1,
+    export: bool = False,
+    color: ColorSpec = "black",
+) -> Compound:
+    """Create a right-angle (horizontal) through-hole male pin header of `rows x pins`.
+
+    Pin 1 solder tail enters the PCB at `(X=0, Y=0, Z=0)`. Pins step along `+X`
+    by `common.male_pin_pitch` and additional rows step along `+Y`. The plastic
+    insulator rests on `Z=0`, solder tails extend into `Z < 0`, and the bent
+    mating posts extend horizontally along `+Y`.
+
+    Args:
+        pins: Number of pins per row.
+        rows: Number of rows (default: 1).
+        export: When True, exports the STEP model to `./stepModels/`.
+        color: Plastic insulator color name, `#RRGGBB` hex string, RGB float
+            tuple, or `build123d.Color` (default: `"black"`).
+
+    Returns:
+        A `Compound` containing the insulator and gold-plated angled pins.
+    """
+    _validate_counts(pins, rows)
+    plastic_color, color_suffix = _resolve_color(color)
+
+    pitch = common.male_pin_pitch
+    ins_depth = common.male_pin_insulation_height  # 2.5 mm along +Y
+    ins_height = (rows - 1) * pitch + common.male_pin_insulation_width  # Z
+    ins_length = pins * pitch  # X
+
+    bend_clearance = 1.5
+    ins_y_start = (rows - 1) * pitch + bend_clearance
+    mating_length = (
+        common.male_pin_height
+        - common.male_pin_insulation_height
+        - common.male_pin_length_over_insulator
+    )
+    y_tip = ins_y_start + ins_depth + mating_length
+
+    center_x = (pins - 1) * pitch / 2
+    center_y = ins_y_start + ins_depth / 2
+
+    # Plastic insulator resting on Z=0 with breakaway V-notches between pins
+    notch_size = 0.4
+    with BuildPart() as insulator_builder:
+        with Locations((center_x, center_y, 0)):
+            Box(
+                ins_length,
+                ins_depth,
+                ins_height,
+                align=(Align.CENTER, Align.CENTER, Align.MIN),
+            )
+        if pins > 1:
+            notch_locations = [
+                Location(
+                    ((i + 0.5) * pitch, center_y, z_face),
+                    (0, 45, 0),
+                )
+                for i in range(pins - 1)
+                for z_face in (0.0, ins_height)
+            ]
+            with Locations(notch_locations):
+                Box(
+                    notch_size,
+                    ins_depth,
+                    notch_size,
+                    align=(Align.CENTER, Align.CENTER, Align.CENTER),
+                    mode=Mode.SUBTRACT,
+                )
+
+    assert insulator_builder.part is not None
+    insulator = insulator_builder.part
+    insulator.color = plastic_color
+    insulator.label = "Insulator"
+
+    # Metal 90-degree bent pins: inner row (closest to insulator) bends lowest
+    pin_parts: list[Part] = []
+    for r in range(rows):
+        y_tail = r * pitch
+        z_bend = common.male_pin_insulation_width / 2 + (rows - 1 - r) * pitch
+        row_pin = _build_angled_male_pin(
+            y_tail=y_tail, z_bend=z_bend, y_tip=y_tip
+        )
+        for i in range(pins):
+            pin_parts.append(row_pin.moved(Location((i * pitch, 0, 0))))
+
+    pins_compound = Compound(children=pin_parts, label="Pins")
+    pins_compound.color = GOLD_PIN_COLOR
+
+    model_name = (
+        f"PinHeader_{rows}x{pins:02d}_P{pitch:.2f}mm_Horizontal{color_suffix}"
+    )
     model = Compound(children=[insulator, pins_compound], label=model_name)
 
     if export:
@@ -194,6 +404,7 @@ def female_pin_header(
     pins: int,
     rows: int = 1,
     export: bool = False,
+    color: ColorSpec = "black",
 ) -> Compound:
     """Create a vertical through-hole female pin header (socket) of `rows x pins`.
 
@@ -204,11 +415,15 @@ def female_pin_header(
         pins: Number of pins per row.
         rows: Number of rows (default: 1).
         export: When True, exports the STEP model to `./stepModels/`.
+        color: Plastic housing color name (e.g. `"black"`, `"red"`, `"blue"`),
+            `#RRGGBB` hex string, RGB float tuple, or `build123d.Color`
+            (default: `"black"`).
 
     Returns:
         A `Compound` containing the housing and solder tails.
     """
     _validate_counts(pins, rows)
+    plastic_color, color_suffix = _resolve_color(color)
 
     pitch = common.female_pin_pitch
     housing_height = common.female_housing_height
@@ -251,7 +466,7 @@ def female_pin_header(
 
     assert housing_builder.part is not None
     housing = housing_builder.part
-    housing.color = PLASTIC_COLOR
+    housing.color = plastic_color
     housing.label = "Housing"
 
     # Solder tails
@@ -264,7 +479,9 @@ def female_pin_header(
     tails_compound = Compound(children=tail_parts, label="SolderTails")
     tails_compound.color = TIN_PIN_COLOR
 
-    model_name = f"PinSocket_{rows}x{pins:02d}_P{pitch:.2f}mm_Vertical"
+    model_name = (
+        f"PinSocket_{rows}x{pins:02d}_P{pitch:.2f}mm_Vertical{color_suffix}"
+    )
     model = Compound(children=[housing, tails_compound], label=model_name)
 
     if export:
@@ -278,6 +495,8 @@ def pin_header(
     header_type: Literal["male", "female"] = "male",
     rows: int = 1,
     export: bool = False,
+    color: ColorSpec = "black",
+    orientation: Literal["vertical", "horizontal", "angled"] = "vertical",
 ) -> Compound:
     """Create a male or female pin header of `rows x pins`.
 
@@ -286,14 +505,36 @@ def pin_header(
         header_type: `"male"` or `"female"` (default: `"male"`).
         rows: Number of rows (default: 1).
         export: When True, exports the STEP model to `./stepModels/`.
+        color: Plastic housing/insulator color (default: `"black"`).
+        orientation: `"vertical"` (default), `"horizontal"`, or `"angled"`
+            (right-angle; supported for male headers).
 
     Returns:
         A `Compound` representing the requested pin header.
     """
+    if orientation not in ("vertical", "horizontal", "angled"):
+        raise ValueError(
+            "orientation must be 'vertical', 'horizontal', or 'angled', "
+            f"got {orientation!r}"
+        )
+
     if header_type == "male":
-        return male_pin_header(pins=pins, rows=rows, export=export)
+        if orientation == "vertical":
+            return male_pin_header(
+                pins=pins, rows=rows, export=export, color=color
+            )
+        return angled_male_pin_header(
+            pins=pins, rows=rows, export=export, color=color
+        )
     if header_type == "female":
-        return female_pin_header(pins=pins, rows=rows, export=export)
+        if orientation != "vertical":
+            raise ValueError(
+                "Angled/horizontal orientation is only supported for male "
+                "pin headers."
+            )
+        return female_pin_header(
+            pins=pins, rows=rows, export=export, color=color
+        )
     raise ValueError(
         f"header_type must be 'male' or 'female', got {header_type!r}"
     )
@@ -318,6 +559,24 @@ if __name__ == "__main__":
         help="Number of rows (default: 1).",
     )
     parser.add_argument(
+        "--orientation",
+        choices=("vertical", "horizontal", "angled"),
+        default="vertical",
+        help=(
+            "Pin header orientation: vertical (default) or "
+            "horizontal/angled (90-degree bent male header)."
+        ),
+    )
+    parser.add_argument(
+        "--color",
+        default="black",
+        help=(
+            "Plastic housing color name (black, white, red, blue, green, "
+            "yellow, orange, gray, or CSS color) or #RRGGBB hex "
+            "(default: black)."
+        ),
+    )
+    parser.add_argument(
         "--export",
         action="store_true",
         help="Export the generated model to ./stepModels/.",
@@ -328,4 +587,6 @@ if __name__ == "__main__":
         header_type=args.header_type,
         rows=args.rows,
         export=args.export,
+        color=args.color,
+        orientation=args.orientation,
     )

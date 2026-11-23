@@ -16,7 +16,7 @@ import webbrowser
 from pathlib import Path
 from typing import Any
 
-from build123d import Color, Compound, Shape, import_step
+from build123d import Color, Compound, Location, Shape, import_step
 
 DEFAULT_MODELS_DIR = Path(__file__).resolve().parent / "stepModels"
 DEFAULT_COLOR = (0.65, 0.70, 0.76, 1.0)
@@ -39,8 +39,15 @@ def _collect_meshes(
     tolerance: float,
     inherited_label: str = "",
     inherited_color: Color | None = None,
+    parent_location: Location | None = None,
 ) -> list[dict[str, Any]]:
-    """Recursively tessellate a STEP shape tree into mesh dictionaries."""
+    """Recursively tessellate a STEP shape tree into mesh dictionaries.
+
+    `build123d` stores child locations relative to their parent `Compound`,
+    while `shape.tessellate()` only applies the leaf's own `location`.
+    Accumulating `parent_location` ensures nested transforms (such as rotated
+    or translated sub-assemblies) render at their true world coordinates.
+    """
     raw_label = getattr(shape, "label", "") or ""
     label = (
         raw_label
@@ -50,6 +57,11 @@ def _collect_meshes(
     color = shape.color if shape.color is not None else inherited_color
 
     if isinstance(shape, Compound) and shape.children:
+        shape_loc = shape.location
+        if parent_location is not None and shape_loc is not None:
+            next_location: Location | None = parent_location * shape_loc
+        else:
+            next_location = shape_loc if shape_loc is not None else parent_location
         meshes: list[dict[str, Any]] = []
         for child in shape.children:
             meshes.extend(
@@ -58,11 +70,15 @@ def _collect_meshes(
                     tolerance=tolerance,
                     inherited_label=label,
                     inherited_color=color,
+                    parent_location=next_location,
                 )
             )
         return meshes
 
-    verts, tris = shape.tessellate(tolerance)
+    world_shape = (
+        shape.moved(parent_location) if parent_location is not None else shape
+    )
+    verts, tris = world_shape.tessellate(tolerance)
     if not verts or not tris:
         return []
 
