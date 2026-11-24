@@ -18,6 +18,7 @@ from build123d import (
     Location,
     Locations,
     Plane,
+    RectangleRounded,
     Shape,
     Text,
     export_step,
@@ -26,7 +27,7 @@ from build123d import (
 
 import common
 from pcb import ColorSpec, module_pcb
-from pinHeaders import TIN_PIN_COLOR, male_pin_header
+from pinHeaders import TIN_PIN_COLOR, angled_male_pin_header, male_pin_header
 from usbConnectors import PLASTIC_COLOR, SHELL_COLOR, micro_usb, mini_usb, usb_c
 
 STEP_MODELS_DIR = Path(__file__).resolve().parent / "stepModels"
@@ -35,6 +36,7 @@ SILKSCREEN_COLOR = Color(0.95, 0.95, 0.93)
 IC_BODY_COLOR = Color(0.12, 0.12, 0.13)
 RED_LED_COLOR = Color(0.85, 0.12, 0.12)
 BLUE_LED_COLOR = Color(0.12, 0.45, 0.90)
+YELLOW_JUMPER_COLOR = Color(0.88, 0.72, 0.10)
 
 UsbType = Literal["usb-c", "micro-usb", "mini-usb", "none"]
 BoardEdge = Literal["-x", "+x", "-y", "+y"]
@@ -1100,6 +1102,482 @@ def esp32_devkitc_38_pin(
     )
 
 
+def stm32f103c8t6(
+    pcb_color: ColorSpec = "blue",
+    header_color: ColorSpec = "yellow",
+    export: bool = False,
+) -> Compound:
+    """Create an STM32F103C8T6 ("Blue Pill", USB-C) microcontroller board.
+
+    Composed of a `53.34 x 22.86 x 1.6 mm` blue PCB, two parallel 1x20 male
+    pin headers (`2.54 mm` pitch, `15.24 mm` / 0.6 in row spacing), white
+    silkscreen pin labels outboard of both rows, a USB-C receptacle on the
+    `-X` edge, 2x3 yellow BOOT0/BOOT1 jumper block, RESET tactile switch,
+    45-degree rotated LQFP-48 STM32F103C8T6 MCU, 8 MHz HC-49S crystal,
+    32.768 kHz RTC crystal, PWR/PC13 LEDs, and a 1x4 right-angle SWD header
+    on the `+X` edge.
+
+    Coordinate convention (KiCad standard):
+    - Pin 1 of Row 1 (`B12`) is at `(X=0, Y=0, Z=0)`; pins step along `+X`
+      (`B12`, `B13`, ..., `5V`, `G`, `3.3`).
+    - Row 2 sits at `Y = 15.24 mm` (`G`, `G`, `3.3`, `R`, ..., `C13`, `VB`).
+    - USB-C faces `-X` and the 1x4 angled SWD header extends past `+X`.
+
+    Args:
+        pcb_color: PCB solder-mask color (default: `"blue"`).
+        header_color: Main 1x20 pin header insulator color (default: `"yellow"`).
+        export: When True, exports `./stepModels/STM32F103C8T6.step`.
+
+    Returns:
+        A `Compound` representing the STM32F103C8T6 Blue Pill board.
+    """
+    pcb_x = 53.34
+    pcb_y = 22.86
+    pcb_thickness = common.pcb_width_16
+    pitch = common.male_pin_pitch
+    pin_count = 20
+    row_spacing = 15.24  # 0.6 in
+
+    pin1_x_offset = (pcb_x - (pin_count - 1) * pitch) / 2  # 2.54 mm
+    pin1_y_offset = (pcb_y - row_spacing) / 2  # 3.81 mm
+
+    pcb_x_min = -pin1_x_offset
+    pcb_x_max = pcb_x_min + pcb_x
+    pcb_y_min = -pin1_y_offset
+    pcb_center_x = pcb_x_min + pcb_x / 2
+    pcb_center_y = pcb_y_min + pcb_y / 2
+    z_top = common.male_pin_insulation_height + pcb_thickness
+
+    # SWD 1x4 right-angle male header on the +X edge (GND, SWCLK, SWDIO, 3V3)
+    swd_pins = 4
+    swd_x = pcb_x_max - (1.5 + common.male_pin_insulation_height)
+    swd_y0 = pcb_center_y + (swd_pins - 1) * pitch / 2
+    swd_header = angled_male_pin_header(
+        pins=swd_pins,
+        rows=1,
+        color="black",
+    ).moved(Location((swd_x, swd_y0, z_top), (0, 0, -90)))
+    swd_header.label = "SWD_Header"
+
+    # Through-holes for the 1x4 SWD header (relative to PCB center)
+    hole_dia = common.female_solder_hole_diameter
+    extra_holes = [
+        (swd_x - pcb_center_x, (swd_y0 - i * pitch) - pcb_center_y, hole_dia)
+        for i in range(swd_pins)
+    ]
+
+    # Pin silkscreen labels (outboard of both 1x20 rows, matching the board)
+    row1_labels = (
+        "B12", "B13", "B14", "B15", "A8", "A9", "A10", "A11", "A12", "A15",
+        "B3", "B4", "B5", "B6", "B7", "B8", "B9", "5V", "G", "3.3",
+    )
+    row2_labels = (
+        "G", "G", "3.3", "R", "B11", "B10", "B1", "B0", "A7", "A6",
+        "A5", "A4", "A3", "A2", "A1", "A0", "C15", "C14", "C13", "VB",
+    )
+    pin_labels_row1 = _build_row_pin_labels(
+        labels=row1_labels,
+        pitch=pitch,
+        y_pos=-2.25,
+        z_top=z_top,
+        group_label="PinLabels_Row1",
+        font_size=0.90,
+    )
+    pin_labels_row2 = _build_row_pin_labels(
+        labels=row2_labels,
+        pitch=pitch,
+        y_pos=row_spacing + 2.25,
+        z_top=z_top,
+        group_label="PinLabels_Row2",
+        font_size=0.90,
+    )
+
+    # 2x3 yellow BOOT0 / BOOT1 jumper header block (+Y side)
+    boot_x = pcb_x_min + 11.5
+    boot_y = pcb_center_y + 2.6
+    boot_hdr = male_pin_header(
+        pins=3,
+        rows=2,
+        color="yellow",
+    ).moved(Location((boot_x - pitch, boot_y - pitch / 2, z_top)))
+    boot_hdr.label = "BootHeader"
+
+    shunt_locations = [
+        (boot_x - pitch / 2, boot_y + dy, z_top + common.male_pin_insulation_height)
+        for dy in (-pitch / 2, pitch / 2)
+    ]
+    with BuildPart() as shunts_builder, Locations(shunt_locations):
+        Box(
+            2 * pitch,
+            2.2,
+            5.8,
+            align=(Align.CENTER, Align.CENTER, Align.MIN),
+        )
+    assert shunts_builder.part is not None
+    boot_shunts = shunts_builder.part
+    boot_shunts.color = YELLOW_JUMPER_COLOR
+    boot_shunts.label = "BootShunts"
+    boot_jumpers = Compound(
+        children=[boot_hdr, boot_shunts], label="BootJumpers"
+    )
+
+    # RESET tactile pushbutton (-Y side, opposite BOOT jumpers)
+    btn_reset = _build_tactile_button(
+        center_x=pcb_x_min + 11.5,
+        center_y=pcb_center_y - 2.6,
+        z_top=z_top,
+        name="Button_RESET",
+    )
+
+    # 45-degree rotated LQFP-48 STM32F103C8T6 MCU
+    mcu_x = pcb_x_min + 23.0
+    mcu_y = pcb_center_y
+    mcu_body_w = 7.0
+    mcu_body_h = 1.4
+    mcu_lead_span = 8.6
+
+    with BuildPart() as mcu_leads_builder:
+        Box(
+            mcu_lead_span,
+            mcu_lead_span,
+            0.25,
+            align=(Align.CENTER, Align.CENTER, Align.MIN),
+        )
+    assert mcu_leads_builder.part is not None
+    mcu_leads = mcu_leads_builder.part.moved(
+        Location((mcu_x, mcu_y, z_top), (0, 0, 45))
+    )
+    mcu_leads.color = TIN_PIN_COLOR
+    mcu_leads.label = "MCU_Leads"
+
+    with BuildPart() as mcu_body_builder:
+        Box(
+            mcu_body_w,
+            mcu_body_w,
+            mcu_body_h,
+            align=(Align.CENTER, Align.CENTER, Align.MIN),
+        )
+    assert mcu_body_builder.part is not None
+    mcu_body = mcu_body_builder.part.moved(
+        Location((mcu_x, mcu_y, z_top + 0.1), (0, 0, 45))
+    )
+    mcu_body.color = IC_BODY_COLOR
+    mcu_body.label = "MCU_Body"
+
+    with BuildPart() as mcu_mark_builder:
+        with BuildSketch(Plane.XY):
+            Text("STM32", font_size=1.2, align=(Align.CENTER, Align.CENTER))
+        extrude(amount=0.06)
+    assert mcu_mark_builder.part is not None
+    mcu_mark = mcu_mark_builder.part.moved(
+        Location((mcu_x, mcu_y, z_top + 0.1 + mcu_body_h), (0, 0, 45))
+    )
+    mcu_mark.color = SILKSCREEN_COLOR
+    mcu_mark.label = "MCU_Marking"
+
+    mcu = Compound(children=[mcu_leads, mcu_body, mcu_mark], label="STM32_MCU")
+
+    # 8 MHz HC-49S metallic crystal can (aligned along Y)
+    with BuildPart() as xtal8_builder:
+        with BuildSketch(Plane.XY):
+            RectangleRounded(4.2, 10.5, 1.8)
+        extrude(amount=3.2)
+    assert xtal8_builder.part is not None
+    xtal_8mhz = xtal8_builder.part.moved(
+        Location((pcb_x_min + 33.0, pcb_center_y, z_top))
+    )
+    xtal_8mhz.color = SHELL_COLOR
+    xtal_8mhz.label = "Crystal_8MHz"
+
+    # 32.768 kHz RTC crystal (black SMD package, aligned along Y)
+    with (
+        BuildPart() as xtal32_builder,
+        Locations((pcb_x_min + 39.5, pcb_center_y, z_top)),
+    ):
+        Box(3.2, 8.0, 2.0, align=(Align.CENTER, Align.CENTER, Align.MIN))
+    assert xtal32_builder.part is not None
+    xtal_32k = xtal32_builder.part
+    xtal_32k.color = IC_BODY_COLOR
+    xtal_32k.label = "Crystal_32kHz"
+
+    # PWR (red) and PC13 (blue) status LEDs
+    led_x = pcb_x_min + 43.8
+    with (
+        BuildPart() as pwr_led_builder,
+        Locations((led_x, pcb_center_y + 2.8, z_top)),
+    ):
+        Box(1.6, 0.8, 0.7, align=(Align.CENTER, Align.CENTER, Align.MIN))
+    assert pwr_led_builder.part is not None
+    pwr_led = pwr_led_builder.part
+    pwr_led.color = RED_LED_COLOR
+    pwr_led.label = "LED_PWR"
+
+    with (
+        BuildPart() as pc13_led_builder,
+        Locations((led_x, pcb_center_y - 2.8, z_top)),
+    ):
+        Box(1.6, 0.8, 0.7, align=(Align.CENTER, Align.CENTER, Align.MIN))
+    assert pc13_led_builder.part is not None
+    pc13_led = pc13_led_builder.part
+    pc13_led.color = BLUE_LED_COLOR
+    pc13_led.label = "LED_PC13"
+
+    extras: tuple[Shape, ...] = (
+        pin_labels_row1,
+        pin_labels_row2,
+        swd_header,
+        boot_jumpers,
+        btn_reset,
+        mcu,
+        xtal_8mhz,
+        xtal_32k,
+        pwr_led,
+        pc13_led,
+    )
+
+    return iot_microcontroller(
+        name="STM32F103C8T6",
+        pcb_width=pcb_x,
+        pcb_length=pcb_y,
+        pins_per_row=pin_count,
+        row_spacing=row_spacing,
+        pin1_x_offset=pin1_x_offset,
+        pin1_y_offset=pin1_y_offset,
+        usb_connector="usb-c",
+        usb_overhang=1.4,
+        usb_edge="-x",
+        pcb_thickness=pcb_thickness,
+        pcb_color=pcb_color,
+        header_color=header_color,
+        extra_holes=extra_holes,
+        extras=extras,
+        export=export,
+    )
+
+
+def stm32f411ceu6(
+    pcb_color: ColorSpec = "black",
+    header_color: ColorSpec = "yellow",
+    export: bool = False,
+) -> Compound:
+    """Create an STM32F411CEU6 ("Black Pill", USB-C) microcontroller board.
+
+    Composed of a `52.81 x 20.78 x 1.6 mm` black PCB, two parallel 1x20 male
+    pin headers (`2.54 mm` pitch, `15.24 mm` / 600 mil row spacing), white
+    silkscreen pin labels outboard of both rows, a USB-C receptacle on the
+    `-X` edge, `NRST` and `BOOT0` tactile buttons, 45-degree rotated
+    UFQFPN-48 STM32F411CEU6 MCU, 25 MHz and 32.768 kHz SMD crystals, `KEY`
+    user button, `C13`/`PWR` LEDs, and a 1x4 right-angle SWD header on the
+    `+X` edge.
+
+    Coordinate convention (KiCad standard):
+    - Pin 1 of Row 1 (`B12`) is at `(X=0, Y=0, Z=0)`; pins step along `+X`
+      (`B12`, `B13`, ..., `5V`, `G`, `3V3`).
+    - Row 2 sits at `Y = 15.24 mm` (`5V`, `G`, `3V3`, `B10`, ..., `C13`, `VB`).
+    - USB-C faces `-X` and the 1x4 angled SWD header extends past `+X`.
+
+    Args:
+        pcb_color: PCB solder-mask color (default: `"black"`).
+        header_color: Main 1x20 pin header insulator color (default: `"yellow"`).
+        export: When True, exports `./stepModels/STM32F411CEU6.step`.
+
+    Returns:
+        A `Compound` representing the STM32F411CEU6 Black Pill board.
+    """
+    pcb_x = 52.81
+    pcb_y = 20.78
+    pcb_thickness = common.pcb_width_16
+    pitch = common.male_pin_pitch
+    pin_count = 20
+    row_spacing = 15.24  # 600 mil (0.6 in)
+
+    pin1_x_offset = (pcb_x - (pin_count - 1) * pitch) / 2  # 2.275 mm
+    pin1_y_offset = (pcb_y - row_spacing) / 2  # 2.77 mm
+
+    pcb_x_min = -pin1_x_offset
+    pcb_x_max = pcb_x_min + pcb_x
+    pcb_y_min = -pin1_y_offset
+    pcb_center_x = pcb_x_min + pcb_x / 2
+    pcb_center_y = pcb_y_min + pcb_y / 2
+    z_top = common.male_pin_insulation_height + pcb_thickness
+
+    # SWD 1x4 right-angle male header on the +X edge (GND, SCK, DIO, 3V3)
+    swd_pins = 4
+    swd_x = pcb_x_max - (1.5 + common.male_pin_insulation_height)
+    swd_y0 = pcb_center_y + (swd_pins - 1) * pitch / 2
+    swd_header = angled_male_pin_header(
+        pins=swd_pins,
+        rows=1,
+        color="black",
+    ).moved(Location((swd_x, swd_y0, z_top), (0, 0, -90)))
+    swd_header.label = "SWD_Header"
+
+    # Through-holes for the 1x4 SWD header (relative to PCB center)
+    hole_dia = common.female_solder_hole_diameter
+    extra_holes = [
+        (swd_x - pcb_center_x, (swd_y0 - i * pitch) - pcb_center_y, hole_dia)
+        for i in range(swd_pins)
+    ]
+
+    # Pin silkscreen labels (outboard of both 1x20 rows, matching the board)
+    row1_labels = (
+        "B12", "B13", "B14", "B15", "A8", "A9", "A10", "A11", "A12", "A15",
+        "B3", "B4", "B5", "B6", "B7", "B8", "B9", "5V", "G", "3V3",
+    )
+    row2_labels = (
+        "5V", "G", "3V3", "B10", "B2", "B1", "B0", "A7", "A6", "A5",
+        "A4", "A3", "A2", "A1", "A0", "R", "C15", "C14", "C13", "VB",
+    )
+    pin_labels_row1 = _build_row_pin_labels(
+        labels=row1_labels,
+        pitch=pitch,
+        y_pos=-1.75,
+        z_top=z_top,
+        group_label="PinLabels_Row1",
+        font_size=0.85,
+    )
+    pin_labels_row2 = _build_row_pin_labels(
+        labels=row2_labels,
+        pitch=pitch,
+        y_pos=row_spacing + 1.75,
+        z_top=z_top,
+        group_label="PinLabels_Row2",
+        font_size=0.85,
+    )
+
+    # NRST (+Y) and BOOT0 (-Y) tactile switches above the USB-C connector
+    btn_x = pcb_x_min + 14.5
+    btn_nrst = _build_tactile_button(
+        center_x=btn_x,
+        center_y=pcb_center_y + 2.4,
+        z_top=z_top,
+        name="Button_NRST",
+    )
+    btn_boot0 = _build_tactile_button(
+        center_x=btn_x,
+        center_y=pcb_center_y - 2.4,
+        z_top=z_top,
+        name="Button_BOOT0",
+    )
+
+    # 45-degree rotated UFQFPN-48 STM32F411CEU6 MCU
+    mcu_x = pcb_x_min + 26.5
+    mcu_y = pcb_center_y
+    mcu_body_w = 7.0
+    mcu_body_h = 0.6
+
+    with BuildPart() as mcu_body_builder:
+        Box(
+            mcu_body_w,
+            mcu_body_w,
+            mcu_body_h,
+            align=(Align.CENTER, Align.CENTER, Align.MIN),
+        )
+    assert mcu_body_builder.part is not None
+    mcu_body = mcu_body_builder.part.moved(
+        Location((mcu_x, mcu_y, z_top), (0, 0, 45))
+    )
+    mcu_body.color = IC_BODY_COLOR
+    mcu_body.label = "MCU_Body"
+
+    with BuildPart() as mcu_mark_builder:
+        with BuildSketch(Plane.XY):
+            Text("STM32F411", font_size=0.95, align=(Align.CENTER, Align.CENTER))
+        extrude(amount=0.06)
+    assert mcu_mark_builder.part is not None
+    mcu_mark = mcu_mark_builder.part.moved(
+        Location((mcu_x, mcu_y, z_top + mcu_body_h), (0, 0, 45))
+    )
+    mcu_mark.color = SILKSCREEN_COLOR
+    mcu_mark.label = "MCU_Marking"
+
+    mcu = Compound(children=[mcu_body, mcu_mark], label="STM32F411_MCU")
+
+    # 25 MHz and 32.768 kHz SMD crystals
+    xtal_x = pcb_x_min + 35.5
+    with (
+        BuildPart() as xtal25_builder,
+        Locations((xtal_x, pcb_center_y + 2.5, z_top)),
+    ):
+        Box(2.5, 3.2, 0.8, align=(Align.CENTER, Align.CENTER, Align.MIN))
+    assert xtal25_builder.part is not None
+    xtal_25mhz = xtal25_builder.part
+    xtal_25mhz.color = SHELL_COLOR
+    xtal_25mhz.label = "Crystal_25MHz"
+
+    with (
+        BuildPart() as xtal32_builder,
+        Locations((xtal_x, pcb_center_y - 2.0, z_top)),
+    ):
+        Box(1.5, 3.2, 0.8, align=(Align.CENTER, Align.CENTER, Align.MIN))
+    assert xtal32_builder.part is not None
+    xtal_32k = xtal32_builder.part
+    xtal_32k.color = SHELL_COLOR
+    xtal_32k.label = "Crystal_32kHz"
+
+    # KEY user tactile button + C13 (blue) and PWR (red) LEDs
+    key_x = pcb_x_min + 41.5
+    btn_key = _build_tactile_button(
+        center_x=key_x,
+        center_y=pcb_center_y - 1.5,
+        z_top=z_top,
+        name="Button_KEY",
+    )
+
+    with (
+        BuildPart() as c13_led_builder,
+        Locations((key_x, pcb_center_y + 3.5, z_top)),
+    ):
+        Box(1.6, 0.8, 0.7, align=(Align.CENTER, Align.CENTER, Align.MIN))
+    assert c13_led_builder.part is not None
+    c13_led = c13_led_builder.part
+    c13_led.color = BLUE_LED_COLOR
+    c13_led.label = "LED_C13"
+
+    with (
+        BuildPart() as pwr_led_builder,
+        Locations((key_x, pcb_center_y - 4.8, z_top)),
+    ):
+        Box(1.6, 0.8, 0.7, align=(Align.CENTER, Align.CENTER, Align.MIN))
+    assert pwr_led_builder.part is not None
+    pwr_led = pwr_led_builder.part
+    pwr_led.color = RED_LED_COLOR
+    pwr_led.label = "LED_PWR"
+
+    extras: tuple[Shape, ...] = (
+        pin_labels_row1,
+        pin_labels_row2,
+        swd_header,
+        btn_nrst,
+        btn_boot0,
+        mcu,
+        xtal_25mhz,
+        xtal_32k,
+        btn_key,
+        c13_led,
+        pwr_led,
+    )
+
+    return iot_microcontroller(
+        name="STM32F411CEU6",
+        pcb_width=pcb_x,
+        pcb_length=pcb_y,
+        pins_per_row=pin_count,
+        row_spacing=row_spacing,
+        pin1_x_offset=pin1_x_offset,
+        pin1_y_offset=pin1_y_offset,
+        usb_connector="usb-c",
+        usb_overhang=0.4,
+        usb_edge="-x",
+        pcb_thickness=pcb_thickness,
+        pcb_color=pcb_color,
+        header_color=header_color,
+        extra_holes=extra_holes,
+        extras=extras,
+        export=export,
+    )
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Generate 3D STEP models for IoT microcontrollers."
@@ -1112,6 +1590,8 @@ if __name__ == "__main__":
             "esp8266",
             "esp32-devkit-v1-30-pin",
             "esp32-devkitc-38-pin",
+            "stm32f103c8t6",
+            "stm32f411ceu6",
         ),
         help="IoT microcontroller board to generate.",
     )
@@ -1172,6 +1652,22 @@ if __name__ == "__main__":
             pcb_color=args.pcb_color if args.pcb_color is not None else "black",
             header_color=(
                 args.header_color if args.header_color is not None else "black"
+            ),
+            export=args.export,
+        )
+    elif args.board == "stm32f103c8t6":
+        stm32f103c8t6(
+            pcb_color=args.pcb_color if args.pcb_color is not None else "blue",
+            header_color=(
+                args.header_color if args.header_color is not None else "yellow"
+            ),
+            export=args.export,
+        )
+    elif args.board == "stm32f411ceu6":
+        stm32f411ceu6(
+            pcb_color=args.pcb_color if args.pcb_color is not None else "black",
+            header_color=(
+                args.header_color if args.header_color is not None else "yellow"
             ),
             export=args.export,
         )

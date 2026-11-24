@@ -468,13 +468,140 @@ def ftdi(
     return model
 
 
+def max98357a(
+    pcb_color: ColorSpec = "purple",
+    header_color: ColorSpec = "yellow",
+    export: bool = False,
+) -> Compound:
+    """Create a MAX98357A I2S 3W Class-D mono amplifier breakout module.
+
+    Composed of a `17.7 x 18.9 x 1.6 mm` rounded-corner PCB, a 1x7 vertical
+    male pin header (`LRC`, `BCLK`, `DIN`, `GAIN`, `SD`, `GND`, `Vin`),
+    two corner mounting holes, two speaker output terminal holes (`-` / `+`),
+    a QFN-16 MAX98357A IC, and white silkscreen labels.
+
+    Coordinate convention:
+    - Pin 1 (`LRC`) is at `(X=0, Y=0, Z=0)` with `Z=0` at the bottom of the
+      header insulator (top surface of the host/carrier PCB).
+    - Header pins step along `+X` by `2.54 mm`, with 5.7 mm mating posts
+      extending downward (`Z < 0`) and 3.0 mm solder tails passing upward
+      through the PCB (`Z = 2.5 .. 4.1 mm`).
+
+    Args:
+        pcb_color: PCB solder-mask color (default: `"purple"`).
+        header_color: Pin header insulator color (default: `"yellow"`).
+        export: When True, exports `./stepModels/MAX98357A.step`.
+
+    Returns:
+        A `Compound` representing the MAX98357A breakout module.
+    """
+    pcb_width = 17.7
+    pcb_length = 18.9
+    pcb_thickness = common.pcb_width_16
+    corner_radius = 1.5
+    edge_offset = 2.0
+    pitch = common.male_pin_pitch
+    ins_height = common.male_pin_insulation_height
+
+    pin_labels = ("LRC", "BCLK", "DIN", "GAIN", "SD", "GND", "Vin")
+    num_pins = len(pin_labels)
+
+    pcb_center_x = (num_pins - 1) * pitch / 2  # 7.62 mm
+    pcb_center_y = pcb_length / 2 - edge_offset  # 7.45 mm
+    z_top = ins_height + pcb_thickness  # 4.1 mm
+
+    # Through-holes relative to PCB center
+    hole_dia = common.female_solder_hole_diameter
+    holes: list[tuple[float, float, float]] = [
+        # 1x7 pin header holes along Y = 0
+        (i * pitch - pcb_center_x, 0.0 - pcb_center_y, hole_dia)
+        for i in range(num_pins)
+    ]
+    # Two top-corner mounting holes (Ø2.5 mm)
+    holes.extend(
+        (side * 6.35, 14.3 - pcb_center_y, 2.5) for side in (-1, 1)
+    )
+    # Two speaker output terminal holes (Ø1.5 mm, 3.5 mm pitch)
+    holes.extend(
+        (side * 1.75, 13.5 - pcb_center_y, 1.5) for side in (-1, 1)
+    )
+
+    board = module_pcb(
+        width=pcb_width,
+        length=pcb_length,
+        thickness=pcb_thickness,
+        color=pcb_color,
+        corner_radius=corner_radius,
+        holes=holes,
+        name="PCB",
+    ).moved(Location((pcb_center_x, pcb_center_y, ins_height)))
+
+    header = male_pin_header(
+        pins=num_pins,
+        rows=1,
+        color=header_color,
+    ).moved(Location((0.0, 0.0, ins_height), (180, 0, 0)))
+    header.label = "PinHeader"
+
+    # MAX98357A QFN-16 IC (3.0 x 3.0 x 0.75 mm)
+    with BuildPart() as ic_builder, Locations((pcb_center_x, 5.5, z_top)):
+        Box(3.0, 3.0, 0.75, align=(Align.CENTER, Align.CENTER, Align.MIN))
+    assert ic_builder.part is not None
+    ic = ic_builder.part
+    ic.color = IC_BODY_COLOR
+    ic.label = "MAX98357A_IC"
+
+    # Staggered white silkscreen pin labels + module title + speaker polarity
+    silk_items: list[tuple[str, str, float, float, float]] = [
+        (
+            f"Label_{text}",
+            text,
+            idx * pitch,
+            1.35 if idx % 2 == 0 else -1.35,
+            0.95,
+        )
+        for idx, text in enumerate(pin_labels)
+    ]
+    silk_items.extend(
+        [
+            ("Label_Title", "MAX98357A", pcb_center_x, 9.5, 1.5),
+            ("Label_Minus", "-", pcb_center_x - 3.9, 13.5, 1.6),
+            ("Label_Plus", "+", pcb_center_x + 3.9, 13.5, 1.6),
+        ]
+    )
+
+    label_parts: list[Shape] = []
+    for part_label, text, lx, ly, fsize in silk_items:
+        with BuildPart() as text_builder:
+            with BuildSketch(Plane.XY):
+                Text(text, font_size=fsize, align=(Align.CENTER, Align.CENTER))
+            extrude(amount=0.08)
+        assert text_builder.part is not None
+        part = text_builder.part.moved(Location((lx, ly, z_top)))
+        part.color = SILKSCREEN_COLOR
+        part.label = part_label
+        label_parts.append(part)
+
+    labels = Compound(children=label_parts, label="Labels")
+    labels.color = SILKSCREEN_COLOR
+
+    name = "MAX98357A"
+    model = Compound(children=[board, header, ic, labels], label=name)
+
+    if export:
+        STEP_MODELS_DIR.mkdir(parents=True, exist_ok=True)
+        export_step(model, str(STEP_MODELS_DIR / f"{name}.step"))
+
+    return model
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Generate 3D STEP models for IoT breakout modules."
     )
     parser.add_argument(
         "module",
-        choices=("bmp180", "ftdi"),
+        choices=("bmp180", "ftdi", "max98357a"),
         help="IoT module to generate.",
     )
     parser.add_argument(
@@ -487,8 +614,8 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--header-color",
-        default="black",
-        help="Pin header plastic color (default: black).",
+        default=None,
+        help="Override pin header plastic color (default depends on module).",
     )
     parser.add_argument(
         "--usb",
@@ -506,13 +633,25 @@ if __name__ == "__main__":
     if args.module == "bmp180":
         bmp180(
             pcb_color=args.pcb_color if args.pcb_color is not None else "purple",
-            header_color=args.header_color,
+            header_color=(
+                args.header_color if args.header_color is not None else "black"
+            ),
             export=args.export,
         )
     elif args.module == "ftdi":
         ftdi(
             pcb_color=args.pcb_color if args.pcb_color is not None else "red",
-            header_color=args.header_color,
+            header_color=(
+                args.header_color if args.header_color is not None else "black"
+            ),
             usb_connector=args.usb,
+            export=args.export,
+        )
+    elif args.module == "max98357a":
+        max98357a(
+            pcb_color=args.pcb_color if args.pcb_color is not None else "purple",
+            header_color=(
+                args.header_color if args.header_color is not None else "yellow"
+            ),
             export=args.export,
         )

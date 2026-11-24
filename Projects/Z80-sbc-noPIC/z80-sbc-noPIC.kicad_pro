@@ -557,7 +557,7 @@
     "last_paths": {
       "idf": "",
       "netlist": "",
-      "plot": "",
+      "plot": "E:/Dropbox/Gerber/Z80/",
       "specctra_dsn": "",
       "step": "",
       "vrml": ""
@@ -718,7 +718,7 @@
         "uuid": "038e9d5f-b272-443d-8510-715d1966b6d0"
       }
     ],
-    "used_designators": "D2,#PWR4,#PWR6,#PWR10,JP1,#FLG3,R7,F1",
+    "used_designators": "D2,#PWR4,#PWR6,#PWR10,H1-4,JP1,#FLG3,R7,F1",
     "variants": []
   },
   "sheets": [
