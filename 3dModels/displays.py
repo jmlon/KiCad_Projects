@@ -1150,6 +1150,235 @@ def st7789_170x320(
     return model
 
 
+def st7789_240x240(
+    pcb_color: ColorSpec = "blue",
+    screen_color: ColorSpec = "black",
+    header_color: ColorSpec = "black",
+    export: bool = False,
+) -> Compound:
+    """Create an SPI ST7789 1.54" IPS TFT (240x240) display module.
+
+    Follows KiCad breakout module conventions:
+    - Pin 1 (`GND`) of the 1x8 male header is at `(X=0, Y=0, Z=0)` with `Z=0`
+      at the bottom of the header insulator (top of the carrier PCB).
+    - The 8 header pins (`GND, VCC, SCL, SDA, RST, DC, CS, BL`) sit along the
+      `-X` edge and step along `+Y` at 2.54 mm pitch, with 5.7 mm mating posts
+      extending downward (`Z < 0`) and 3.0 mm solder tails passing upward
+      through the `43.0 x 31.0 x 1.6 mm` blue PCB (`Z = 2.5 .. 4.1`).
+    - Four `3.0 mm` corner mounting holes sit at `38.0 x 26.0 mm` pitch.
+    - Square IPS TFT panel (`33.72 x 30.60 x 1.90 mm` LCM outline,
+      `27.72 x 27.72 mm` active display area) rests on top of the PCB
+      (`Z = 4.1 .. 6.0`) with an amber FPC ribbon along the `+X` edge and
+      white silkscreen pin labels on the top and bottom surfaces.
+
+    Args:
+        pcb_color: PCB solder-mask color (default: `"blue"`).
+        screen_color: TFT active area color (default: `"black"`).
+        header_color: Pin header plastic color (default: `"black"`).
+        export: When True, exports
+            `./stepModels/SPI-ST7789-1.54-TFT-240x240.step`.
+
+    Returns:
+        A `Compound` containing the PCB, white frame, glass bezel, TFT screen,
+        FPC ribbon, 1x8 male pin header, and silkscreen pin labels.
+    """
+    pcb_w = 43.0
+    pcb_l = 31.0
+    pcb_t = common.pcb_width_16
+    pitch = common.male_pin_pitch
+    ins_height = common.male_pin_insulation_height
+
+    # Pin 1 (GND) of the 1x8 header on the -X edge in local PCB coords (u, v)
+    pin_count = 8
+    pin1_u = 2.0  # 2.0 mm from -X edge
+    pin1_v = (pcb_l - (pin_count - 1) * pitch) / 2  # 6.61 mm from -Y edge
+
+    pcb_x_min = -pin1_u
+    pcb_y_min = -pin1_v
+    pcb_center_x = pcb_x_min + pcb_w / 2
+    pcb_center_y = pcb_y_min + pcb_l / 2
+    z_top = ins_height + pcb_t
+
+    # 4 corner mounting holes (3.0 mm, 2.5 mm inset -> 38 x 26 mm pitch)
+    hole_inset = 2.5
+    hole_dia = 3.0
+    pin_hole_dia = common.female_solder_hole_diameter
+    hx = pcb_w / 2 - hole_inset
+    hy = pcb_l / 2 - hole_inset
+    holes: list[tuple[float, float, float]] = [
+        (-hx, -hy, hole_dia),
+        (-hx, hy, hole_dia),
+        (hx, -hy, hole_dia),
+        (hx, hy, hole_dia),
+    ]
+    for i in range(pin_count):
+        holes.append(
+            (pin1_u - pcb_w / 2, pin1_v + i * pitch - pcb_l / 2, pin_hole_dia)
+        )
+
+    board = module_pcb(
+        width=pcb_w,
+        length=pcb_l,
+        thickness=pcb_t,
+        color=pcb_color,
+        holes=holes,
+        name="PCB",
+    ).moved(Location((pcb_center_x, pcb_center_y, ins_height)))
+
+    header = (
+        male_pin_header(pins=pin_count, rows=1, color=header_color)
+        .moved(Location((0, 0, ins_height), (180, 0, 0)))
+        .moved(Location((0, 0, 0), (0, 0, 90)))
+    )
+    header.label = "PinHeader"
+
+    # LCM panel outline (33.72 x 30.60 mm) and square active area (27.72 x 27.72 mm)
+    frame_w = 33.72
+    frame_l = 30.60
+    frame_h = 1.87
+    frame_x0 = pcb_x_min + 4.0
+    frame_y0 = pcb_y_min + (pcb_l - frame_l) / 2
+
+    rim = 0.3
+    bezel_w = frame_w - 2 * rim
+    bezel_l = frame_l - 2 * rim
+    bezel_h = 1.89
+    bezel_x0 = frame_x0 + rim
+    bezel_y0 = frame_y0 + rim
+
+    screen_w = 27.72
+    screen_l = 27.72
+    screen_recess = 0.05
+    screen_x0 = frame_x0 + 1.5
+    screen_y0 = pcb_y_min + (pcb_l - screen_l) / 2
+    screen_z0 = z_top + bezel_h - screen_recess
+
+    with BuildPart() as frame_builder:
+        with Locations((frame_x0, frame_y0, z_top)):
+            Box(
+                frame_w,
+                frame_l,
+                frame_h,
+                align=(Align.MIN, Align.MIN, Align.MIN),
+            )
+        with Locations((bezel_x0, bezel_y0, z_top)):
+            Box(
+                bezel_w,
+                bezel_l,
+                frame_h + 0.01,
+                align=(Align.MIN, Align.MIN, Align.MIN),
+                mode=Mode.SUBTRACT,
+            )
+
+    assert frame_builder.part is not None
+    frame = frame_builder.part
+    frame.color = WHITE_FRAME_COLOR
+    frame.label = "Frame"
+
+    with BuildPart() as bezel_builder:
+        with Locations((bezel_x0, bezel_y0, z_top)):
+            Box(
+                bezel_w,
+                bezel_l,
+                bezel_h,
+                align=(Align.MIN, Align.MIN, Align.MIN),
+            )
+        with Locations((screen_x0, screen_y0, screen_z0)):
+            Box(
+                screen_w,
+                screen_l,
+                screen_recess + 0.01,
+                align=(Align.MIN, Align.MIN, Align.MIN),
+                mode=Mode.SUBTRACT,
+            )
+
+    assert bezel_builder.part is not None
+    bezel = bezel_builder.part
+    bezel.color = BEZEL_COLOR
+    bezel.label = "Bezel"
+
+    screen_thickness = 0.06
+    with (
+        BuildPart() as screen_builder,
+        Locations((screen_x0, screen_y0, screen_z0)),
+    ):
+        Box(
+            screen_w,
+            screen_l,
+            screen_thickness,
+            align=(Align.MIN, Align.MIN, Align.MIN),
+        )
+
+    assert screen_builder.part is not None
+    screen = screen_builder.part
+    screen.color = _resolve_screen_color(screen_color)
+    screen.label = "Screen"
+
+    # Amber FPC flex ribbon along the +X edge of the panel
+    fpc_w = 1.8
+    fpc_l = 20.0
+    fpc_h = 0.4
+    fpc_x0 = frame_x0 + frame_w
+    with (
+        BuildPart() as fpc_builder,
+        Locations((fpc_x0, pcb_center_y, z_top)),
+    ):
+        Box(
+            fpc_w,
+            fpc_l,
+            fpc_h,
+            align=(Align.MIN, Align.CENTER, Align.MIN),
+        )
+
+    assert fpc_builder.part is not None
+    fpc = fpc_builder.part
+    fpc.color = FPC_COLOR
+    fpc.label = "FPC"
+
+    # Top and bottom white silkscreen pin labels
+    header_labels = ("GND", "VCC", "SCL", "SDA", "RST", "DC", "CS", "BL")
+    bottom_plane = Plane(
+        (0.0, 0.0, ins_height), x_dir=(-1, 0, 0), z_dir=(0, 0, -1)
+    )
+    with BuildPart() as silk_builder:
+        with BuildSketch(Plane.XY.offset(z_top)):
+            for i, text_str in enumerate(header_labels):
+                with Locations(Location((1.25, i * pitch), 90)):
+                    Text(
+                        text_str,
+                        font_size=0.85,
+                        align=(Align.CENTER, Align.CENTER),
+                    )
+        extrude(amount=0.05)
+
+        with BuildSketch(bottom_plane):
+            for i, text_str in enumerate(header_labels):
+                with Locations((-2.2, i * pitch)):
+                    Text(
+                        text_str,
+                        font_size=1.25,
+                        align=(Align.MAX, Align.CENTER),
+                    )
+        extrude(amount=0.05)
+
+    assert silk_builder.part is not None
+    silkscreen = silk_builder.part
+    silkscreen.color = WHITE_FRAME_COLOR
+    silkscreen.label = "Silkscreen"
+
+    model_name = "SPI-ST7789-1.54-TFT-240x240"
+    model = Compound(
+        children=[board, frame, bezel, screen, fpc, header, silkscreen],
+        label=model_name,
+    )
+
+    if export:
+        STEP_MODELS_DIR.mkdir(parents=True, exist_ok=True)
+        export_step(model, str(STEP_MODELS_DIR / f"{model_name}.step"))
+
+    return model
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Generate 3D STEP models for display modules."
@@ -1163,6 +1392,7 @@ if __name__ == "__main__":
             "st7735s-128x160-sd",
             "st7735-128x160",
             "st7789-170x320",
+            "st7789-240x240",
         ),
         help="Display module to generate.",
     )
@@ -1239,6 +1469,15 @@ if __name__ == "__main__":
         )
     elif args.display == "st7789-170x320":
         st7789_170x320(
+            pcb_color=args.pcb_color if args.pcb_color is not None else "blue",
+            screen_color=(
+                args.screen_color if args.screen_color is not None else "black"
+            ),
+            header_color=args.header_color,
+            export=args.export,
+        )
+    elif args.display == "st7789-240x240":
+        st7789_240x240(
             pcb_color=args.pcb_color if args.pcb_color is not None else "blue",
             screen_color=(
                 args.screen_color if args.screen_color is not None else "black"
