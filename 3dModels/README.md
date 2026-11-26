@@ -208,6 +208,7 @@ Includes:
 - `st7735_128x160` (`SPI-ST7735-1.8-TFT-128x160`: `55.0 × 35.0 × 1.6 mm` blue PCB with rounded corners, four `3.0 mm` mounting holes at `50 × 30 mm` pitch, 1×8 male pin header along the `-X` edge with Pin 1 (`GND`) at `(0, 0, 0)`, and white frame + black TFT glass on top; no SD card reader).
 - `st7789_170x320` (`SPI-ST7789-1.9-TFT-170x320`: `62.0 × 29.0 × 1.6 mm` blue PCB with rounded corners, four `2.5 mm` mounting holes at `57 × 24 mm` pitch, FPC ribbon slot, 1×8 male pin header along the `-X` edge with Pin 1 (`GND`) at `(0, 0, 0)` and top silkscreen labels `GND, VCC, SCL, SDA, RES, DC, CS, BLK`, plus `49.72 × 25.80 × 1.43 mm` IPS TFT panel with `42.72 × 22.70 mm` active area).
 - `st7789_240x240` (`SPI-ST7789-1.54-TFT-240x240`: `43.0 × 31.0 × 1.6 mm` blue PCB with four `3.0 mm` mounting holes at `38 × 26 mm` pitch, 1×8 male pin header along the `-X` edge with Pin 1 (`GND`) at `(0, 0, 0)` and top/bottom silkscreen labels `GND, VCC, SCL, SDA, RST, DC, CS, BL`, plus `33.72 × 30.60 × 1.90 mm` square IPS TFT panel with `27.72 × 27.72 mm` active area).
+- `st7789_240x280` (`SPI-ST7789-1.69-TFT-240x280`: `48.0 × 31.0 × 1.6 mm` blue PCB with four `3.0 mm` mounting holes at `43 × 26 mm` pitch, `+X` FPC notch, 1×8 male pin header along the `-X` edge with Pin 1 (`GND`) at `(0, 0, 0)` and top/bottom silkscreen labels `GND..BLK` / `BLK..GND`, plus `37.43 × 30.07 × 1.56 mm` rounded-corner IPS TFT panel with `32.63 × 27.97 mm` active area).
 
 ```sh
 # Generate LCD1602 (default green PCB, blue screen)
@@ -220,6 +221,7 @@ uv run python displays.py st7735s-128x160-sd --export
 uv run python displays.py st7735-128x160 --export
 uv run python displays.py st7789-170x320 --export
 uv run python displays.py st7789-240x240 --export
+uv run python displays.py st7789-240x280 --export
 
 # Yellow-green backlit LCD1602
 uv run python displays.py lcd1602 --screen-color yellow-green --export
@@ -234,6 +236,7 @@ from displays import (
     st7735s_128x160_sd,
     st7789_170x320,
     st7789_240x240,
+    st7789_240x280,
 )
 
 lcd1602(export=True)
@@ -243,6 +246,7 @@ st7735s_128x160_sd(export=True)
 st7735_128x160(export=True)
 st7789_170x320(export=True)
 st7789_240x240(export=True)
+st7789_240x280(export=True)
 ```
 
 ## STEP viewer (`stepViewer.py`)
